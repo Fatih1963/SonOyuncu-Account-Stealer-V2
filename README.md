@@ -17,22 +17,25 @@ Advanced credential extraction tool for SonOyuncu client with memory reading and
     <dependency>
         <groupId>net.java.dev.jna</groupId>
         <artifactId>jna</artifactId>
-        <version>4.5.1</version>
+        <version>5.12.1</version>
     </dependency>
+
     <dependency>
         <groupId>net.java.dev.jna</groupId>
         <artifactId>jna-platform</artifactId>
-        <version>4.5.1</version>
+        <version>5.12.1</version>
     </dependency>
-    <dependency>
-        <groupId>org.apache.httpcomponents</groupId>
-        <artifactId>httpclient</artifactId>
-        <version>4.5.7</version>
-    </dependency>
+
     <dependency>
         <groupId>com.google.code.gson</groupId>
         <artifactId>gson</artifactId>
-        <version>2.12.1</version>
+        <version>2.10.1</version>
+    </dependency>
+
+    <dependency>
+        <groupId>org.apache.httpcomponents</groupId>
+        <artifactId>httpclient</artifactId>
+        <version>4.5.14</version>
     </dependency>
 </dependencies>
 ```
