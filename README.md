@@ -39,6 +39,8 @@ Advanced credential extraction tool for SonOyuncu client with memory reading and
 
 ### :wrench: Python Version
 ```xml
+pip install requests
+pip install psutil
 pip install pymem
 ```
 
