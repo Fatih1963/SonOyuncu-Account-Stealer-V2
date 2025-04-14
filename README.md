@@ -1,6 +1,6 @@
 # :lock: SonOyuncu Account Stealer V2  
-![Banner](https://i.imgur.com/rwLXYtP.png)  
-
+<p align= "center"> <img  src="https://i.imgur.com/o5rYD8Q.png"width="500"><br><br>
+    
 Advanced credential extraction tool for SonOyuncu client with memory reading and Discord webhook integration. Available in both Java and Python implementations.
 
 ## :pushpin: Features
