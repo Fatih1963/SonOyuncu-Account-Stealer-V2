@@ -1,7 +1,9 @@
 # :lock: SonOyuncu Account Stealer
 <p align= "left"> <img  src="https://i.imgur.com/o5rYD8Q.png"width="500"><br><br>
-    
+
 Advanced credential extraction tool for SonOyuncu client with memory reading and Discord webhook integration.
+
+---
 
 ## :pushpin: Features
 - :detective: Memory reading technique
@@ -9,6 +11,8 @@ Advanced credential extraction tool for SonOyuncu client with memory reading and
 - :outbox_tray: Discord webhook integration
 - :mag: Regex-based data extraction
 - :broom: Automatic cleaning mechanism
+
+---
 
 ### :wrench: Java Version
 ```xml
@@ -35,6 +39,8 @@ Advanced credential extraction tool for SonOyuncu client with memory reading and
     </dependency>
 </dependencies>
 ```
+
+---
 
 ### :warning: Disclaimer
 This project has been developed for educational purposes only. Unauthorized system access is strictly prohibited and constitutes a criminal offense. The developer cannot be held responsible for any misuse.
