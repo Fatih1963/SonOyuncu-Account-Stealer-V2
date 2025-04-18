@@ -15,7 +15,7 @@ Advanced credential extraction tool for SonOyuncu client with memory reading and
 
 ---
 
-### :wrench: Java Version
+### :wrench: Dependencies
 
 ```xml
 <dependencies>
