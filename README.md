@@ -6,6 +6,7 @@ Advanced credential extraction tool for SonOyuncu client with memory reading and
 ---
 
 ## :pushpin: Features
+
 - :detective: Memory reading technique
 - 💻 Hidden desktop environment
 - :outbox_tray: Discord webhook integration
@@ -15,6 +16,7 @@ Advanced credential extraction tool for SonOyuncu client with memory reading and
 ---
 
 ### :wrench: Java Version
+
 ```xml
 <dependencies>
     <dependency>
@@ -43,4 +45,5 @@ Advanced credential extraction tool for SonOyuncu client with memory reading and
 ---
 
 ### :warning: Disclaimer
+
 This project has been developed for educational purposes only. Unauthorized system access is strictly prohibited and constitutes a criminal offense. The developer cannot be held responsible for any misuse.
