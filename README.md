@@ -37,6 +37,18 @@ Advanced credential extraction tool for SonOyuncu client with memory reading and
         <artifactId>httpclient</artifactId>
         <version>4.5.14</version>
     </dependency>
+
+    <dependency>
+        <groupId>org.apache.httpcomponents</groupId>
+        <artifactId>httpcore</artifactId>
+        <version>4.4.16</version>
+    </dependency>
+
+    <dependency>
+        <groupId>commons-logging</groupId>
+        <artifactId>commons-logging</artifactId>
+        <version>1.2</version>
+    </dependency>
 </dependencies>
 ```
 
